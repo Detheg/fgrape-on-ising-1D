@@ -1,3 +1,7 @@
+# Add the feedback-grape git submodule to the path
+import sys, os
+sys.path.append(os.path.abspath("./feedback-grape"))
+
 from feedback_grape.utils.operators import (
     sigmax,
     sigmay,

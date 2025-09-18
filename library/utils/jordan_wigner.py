@@ -1,3 +1,8 @@
+# Add the feedback-grape git submodule to the path
+import sys, os
+sys.path.append(os.path.abspath("./feedback-grape"))
+print(os.path.abspath("./feedback-grape"))
+
 from feedback_grape.utils.tensor import tensor
 from feedback_grape.utils.states import basis
 from feedback_grape.utils.operators import identity, sigmam, sigmap
