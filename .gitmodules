@@ -1,0 +1,6 @@
+[submodule "feedback-grape-dev"]
+	path = feedback-grape-dev
+	url = https://github.com/Detheg/feedback-grape.git
+[submodule "feedback-grape"]
+	path = feedback-grape
+	url = https://github.com/Detheg/feedback-grape.git
