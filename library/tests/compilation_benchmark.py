@@ -4,20 +4,21 @@ import sys, os
 sys.path.append(os.path.abspath("./feedback-grape"))
 
 # ruff: noqa
-from feedback_grape.fgrape import optimize_pulse, Decay, Gate
-from feedback_grape.utils.operators import cosm, sinm, identity
-from feedback_grape.utils.states import coherent
+from feedback_grape.fgrape import optimize_pulse, Decay, Gate # type: ignore
+from feedback_grape.utils.operators import cosm, sinm, identity # type: ignore
+from feedback_grape.utils.states import coherent # type: ignore
 import jax.numpy as jnp
+import numpy as np
 import jax
-from feedback_grape.utils.operators import create, destroy
-from feedback_grape.utils.fidelity import ket2dm
+from feedback_grape.utils.operators import create, destroy # type: ignore
+from feedback_grape.utils.fidelity import ket2dm # type: ignore
 from time import time
 
 jax.config.update("jax_enable_x64", True)
 
 # Physical parameters
-N_cav = 30  # number of cavity modes
-N_snap = 15
+N_cav = 10  # number of cavity modes
+N_snap = 5
 
 alpha = 2
 psi_target = coherent(N_cav, alpha) + coherent(N_cav, -alpha)
@@ -28,10 +29,10 @@ psi_target = psi_target / jnp.linalg.norm(psi_target)
 rho_target = ket2dm(psi_target)
 
 # Test system from example H
-num_time_steps = 2
+num_time_steps = 4
 lut_depth = 2
-reward_weights = [0, 1]
-N_training_iterations = 1 # Number of training iterations
+reward_weights = [0, 0, 0, 1]
+N_training_iterations = 20 # Number of training iterations
 learning_rate = 0.01 # Learning rate
 convergence_threshold = 1e-6 # Convergence threshold for early stopping
 
@@ -151,7 +152,27 @@ result = optimize_pulse(
     learning_rate=learning_rate,
     evo_type="density",
     batch_size=16,
-    progress=True,
+)
+end_time = time()
+print(f"Time for single training iteration: {end_time - start_time} seconds")
+print(f"Fidelity {result.final_fidelity}")
+
+start_time = time()
+result = optimize_pulse(
+    U_0=rho_target,
+    C_target=rho_target,
+    system_params=system_params,
+    num_time_steps=num_time_steps,
+    lut_depth=lut_depth,
+    reward_weights=reward_weights,
+    mode="lookup",
+    goal="fidelity",
+    max_iter=N_training_iterations,
+    convergence_threshold=convergence_threshold,
+    learning_rate=learning_rate,
+    evo_type="density",
+    batch_size=16,
 )
 end_time = time()
 print(f"Time for {N_training_iterations} training iterations: {end_time - start_time} seconds")
+print(f"Fidelity {result.final_fidelity}")
