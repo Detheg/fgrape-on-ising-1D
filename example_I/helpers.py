@@ -293,17 +293,54 @@ def init_fgrape_protocol(key, n, N_chains, gamma):
 
     return [first_gate, T_half_gate, decay_gate, T_half_gate, ptrace_gate, povm_gate, U_gate]
 
-# Function to generate random initial states
+# Function to generate random states
 def generate_random_state(key, N_chains):
-    """ Generate a pair of up or down states with equal probability. """
-    random_value = jax.random.uniform(key, minval=0.0, maxval=1.0)
+    """ Generate a state (alpha*|01> + beta*|10>) with random, complex alpha, beta."""
+    assert N_chains == 2, "Number of chains must be 2 for this random state generator."
+
+    subkey1, subkey2 = jax.random.split(key, 2)
+    alpha = jax.random.uniform(subkey1, minval=0.0, maxval=1.0)
+    phi = jax.random.uniform(subkey2, minval=0.0, maxval=2*jnp.pi)
+    beta = jnp.sqrt(1 - alpha**2) * jnp.exp(1j * phi)
 
     psi_one  = basis(2, 0)
     psi_zero = basis(2, 1)
-    psi = jnp.where(random_value < 0.5, psi_one, psi_zero)
 
-    return ket2dm(tensor(*([psi]*N_chains)))
+    psi = alpha * tensor(psi_zero, psi_one) + beta * tensor(psi_one, psi_zero)
+
+    return ket2dm(psi)
 generate_random_state = jax.jit(generate_random_state, static_argnames=['N_chains'])
+
+# Function to generate random initial states
+def generate_random_initial_state(key, N_chains):
+    """
+        Generate a state (alpha*|01> + beta*|10> + eps1*|00> + eps2*|11>) with random, complex alpha, beta
+        and epsilon noise terms eps1, eps2 from a uniform distribution.
+    """
+    assert N_chains == 2, "Number of chains must be 2 for this random state generator."
+    noise_level = 1.0
+
+    subkey1, subkey2, subkey3, subkey4 = jax.random.split(key, 4)
+    eps1 = noise_level * jax.random.uniform(subkey3, minval=-1.0, maxval=1.0)
+    eps2 = noise_level * jax.random.uniform(subkey4, minval=-1.0, maxval=1.0)
+    alpha = jax.random.uniform(subkey1, minval=0.0, maxval=1.0)
+    phi = jax.random.uniform(subkey2, minval=0.0, maxval=2*jnp.pi)
+    beta = jnp.sqrt(1 - alpha**2) * jnp.exp(1j * phi)
+
+    psi_one  = basis(2, 0)
+    psi_zero = basis(2, 1)
+
+    psi = (
+        alpha * tensor(psi_zero, psi_one)
+        + beta * tensor(psi_one, psi_zero)
+        + eps1 * tensor(psi_zero, psi_zero)
+        + eps2 * tensor(psi_one, psi_one)
+    )
+
+    psi = psi / jnp.linalg.norm(psi)
+
+    return ket2dm(psi)
+generate_random_initial_state = jax.jit(generate_random_initial_state, static_argnames=['N_chains'])
 
 # Function to generate initial states
 def generate_all_states(N_chains):
@@ -314,6 +351,18 @@ def generate_all_states(N_chains):
 
 # Tests for the implementations
 def test_implementations():
+    # Test random state generation
+    for callab in [generate_random_initial_state, generate_random_state]:
+        for i in range(10):
+            key = jax.random.PRNGKey(i)
+            rho = callab(key, N_chains=2)
+
+            assert jnp.allclose(rho, rho.conj().T), "Generated state is not Hermitian"
+            assert jnp.isclose(jnp.trace(rho), 1.0), "Generated state does not have trace 1"
+            eigvals = jnp.linalg.eigvals(rho)
+            assert jnp.all(eigvals >= -1e-10), "Generated state is not positive semidefinite"
+
+
     # Test unitary and special unitary generators
     for i in range(10):
         key = jax.random.PRNGKey(i)

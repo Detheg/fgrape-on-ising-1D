@@ -1,0 +1,8 @@
+Simulation details:
+
+N_chains = 2, n = 2
+jump_ops = [gamma * embed(sigmam(), idx, N_chains*n) for idx in range(N_chains*n)] with gamma=0.25
+initial and target states were (alpha*|00...0> + beta*|11...1>) with random, complex alpha, beta.
+
+Architectures until num_time_steps = 3 were tested with lut_depth=1.
+Maximum number of iterations: 1000, except for lut_t=2_d=1_w=11, that was tested with 4000

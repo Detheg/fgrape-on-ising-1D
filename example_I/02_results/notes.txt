@@ -1,0 +1,7 @@
+Simulation details:
+
+N_chains = 2, n = 2
+jump_ops = [sum([gamma * embed(sigmam(), idx, N_chains*n])) for idx in range(N_chains*n)]
+initial and target states are both randomly |00> or |11> with equal probability
+
+Architectures until num_time_steps = 3 were tested.

@@ -1,0 +1,1 @@
+{"fidelities_each_sample": [0.9583706866117169, 0.961088656382103, 0.9602000723320997], "average_fidelity": 0.9598864717753065, "training_params": {"N_samples": 3, "N_training_iterations": 1000, "learning_rate": 0.01, "convergence_threshold": 1e-06, "batch_size": 16, "eval_batch_size": 16, "evaluation_time_steps": 200}}
