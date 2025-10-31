@@ -294,65 +294,71 @@ def init_fgrape_protocol(key, n, N_chains, gamma):
     return [first_gate, T_half_gate, decay_gate, T_half_gate, ptrace_gate, povm_gate, U_gate]
 
 # Function to generate random states
-def generate_random_state(key, N_chains):
-    """ Generate a state (alpha*|01> + beta*|10>) with random, complex alpha, beta."""
-    assert N_chains == 2, "Number of chains must be 2 for this random state generator."
-
-    subkey1, subkey2 = jax.random.split(key, 2)
-    alpha = jax.random.uniform(subkey1, minval=0.0, maxval=1.0)
-    phi = jax.random.uniform(subkey2, minval=0.0, maxval=2*jnp.pi)
-    beta = jnp.sqrt(1 - alpha**2) * jnp.exp(1j * phi)
-
-    psi_one  = basis(2, 0)
-    psi_zero = basis(2, 1)
-
-    psi = alpha * tensor(psi_zero, psi_one) + beta * tensor(psi_one, psi_zero)
-
-    return ket2dm(psi)
-generate_random_state = jax.jit(generate_random_state, static_argnames=['N_chains'])
-
-# Function to generate random initial states
-def generate_random_initial_state(key, N_chains):
+def generate_random_bloch_state(key, N_chains, noise_level):
     """
-        Generate a state (alpha*|01> + beta*|10> + eps1*|00> + eps2*|11>) with random, complex alpha, beta
-        and epsilon noise terms eps1, eps2 from a uniform distribution.
+        Generate a random density matrix on Bloch sphere (cos(theta/2)*|000> + sin(theta/2)*exp(i*phi)*sin(theta/2)*|111>)
+        plus noise term eps * |000><000| where eps is drawn from uniform distribution between ±noise_level
+        and theta, phi are drawn from uniform distributions.
     """
-    assert N_chains == 2, "Number of chains must be 2 for this random state generator."
-    noise_level = 1.0
-
-    subkey1, subkey2, subkey3, subkey4 = jax.random.split(key, 4)
-    eps1 = noise_level * jax.random.uniform(subkey3, minval=-1.0, maxval=1.0)
-    eps2 = noise_level * jax.random.uniform(subkey4, minval=-1.0, maxval=1.0)
-    alpha = jax.random.uniform(subkey1, minval=0.0, maxval=1.0)
+    
+    subkey1, subkey2, subkey3 = jax.random.split(key, 3)
+    eps = jax.random.uniform(subkey3, minval=-noise_level, maxval=noise_level)
+    theta = jax.random.uniform(subkey1, minval=0.0, maxval=jnp.pi)
     phi = jax.random.uniform(subkey2, minval=0.0, maxval=2*jnp.pi)
-    beta = jnp.sqrt(1 - alpha**2) * jnp.exp(1j * phi)
+    alpha = jnp.cos(theta / 2)
+    beta = jnp.sin(theta / 2) * jnp.exp(1j * phi)
 
     psi_one  = basis(2, 0)
     psi_zero = basis(2, 1)
 
     psi = (
-        alpha * tensor(psi_zero, psi_one)
-        + beta * tensor(psi_one, psi_zero)
-        + eps1 * tensor(psi_zero, psi_zero)
-        + eps2 * tensor(psi_one, psi_one)
+        alpha * tensor(psi_zero, psi_zero, psi_zero)
+        + beta * tensor(psi_one, psi_one, psi_one)
     )
+    
+    psi_noise = eps * tensor(psi_zero, psi_zero, psi_zero)
 
-    psi = psi / jnp.linalg.norm(psi)
+    if noise_level == float("inf"):
+        return ket2dm(tensor(psi_zero, psi_zero, psi_zero))
+    elif noise_level == 0:
+        return ket2dm(psi)
+    else:
+        rho_out = ket2dm(psi) + ket2dm(psi_noise)
+        return rho_out / jnp.trace(rho_out)
+generate_random_bloch_state = jax.jit(generate_random_bloch_state, static_argnames=['N_chains','noise_level'])
 
-    return ket2dm(psi)
-generate_random_initial_state = jax.jit(generate_random_initial_state, static_argnames=['N_chains'])
+def generate_random_discrete_state(key, N_chains, noise_level):
+    """
+        Generate a random density matrix which is either |000><000| or |111><111|
+        plus noise term eps * |000><000| where eps is drawn from uniform distribution between ±noise_level.
+    """
 
-# Function to generate initial states
-def generate_all_states(N_chains):
+    subkey1, _, subkey3 = jax.random.split(key, 3) # 3 keys for consistency with generate_random_bloch_state
+    eps = jax.random.uniform(subkey3, minval=-noise_level, maxval=noise_level)
+
     psi_one  = basis(2, 0)
     psi_zero = basis(2, 1)
 
-    return [ket2dm(tensor(*([psi_zero]*N_chains))), ket2dm(tensor(*([psi_one]*N_chains)))]
+    psi = jnp.where(jax.random.uniform(subkey1) < 0.5,
+        tensor(psi_zero, psi_zero, psi_zero),
+        tensor(psi_one, psi_one, psi_one)
+    )
+    
+    psi_noise = eps * tensor(psi_zero, psi_zero, psi_zero)
+
+    if noise_level == float("inf"):
+        return ket2dm(tensor(psi_zero, psi_zero, psi_zero))
+    elif noise_level == 0:
+        return ket2dm(psi)
+    else:
+        rho_out = ket2dm(psi) + ket2dm(psi_noise)
+        return rho_out / jnp.trace(rho_out)
+generate_random_discrete_state = jax.jit(generate_random_discrete_state, static_argnames=['N_chains','noise_level'])
 
 # Tests for the implementations
 def test_implementations():
     # Test random state generation
-    for callab in [generate_random_initial_state, generate_random_state]:
+    for callab in [lambda key, N_chains: generate_random_discrete_state(key, N_chains, noise_level=1.0), lambda key, N_chains: generate_random_bloch_state(key, N_chains, noise_level=1.0)]:
         for i in range(10):
             key = jax.random.PRNGKey(i)
             rho = callab(key, N_chains=2)

@@ -1,0 +1,14 @@
+(basically the same as 08_results but on discrete states instead of Bloch sphere and less thouroughly trained)
+
+Simulation details:
+
+N_chains = 2, n = 2
+jump_ops = [gamma * embed(sigmam(), idx, N_chains*n) for idx in range(N_chains*n)] with gamma=0.25
+initial and target states are randomly |01><01| or |10><10|
+
+To initial state noise term  (eps * |00><00|) was added where
+eps random uniform distributions between ±noise (noise level is written into filenames).
+
+Training is performed with noise and evaluation without.
+
+Every model is randomly initialized 3 times and trained for 1000 iterations. We select the one with best mean fidelity across 100 segments.
