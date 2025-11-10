@@ -1,0 +1,18 @@
+trained with 
+
+gamma = 0.05 # Decay constant
+generate_state = generate_random_bloch_state
+N_chains = 3
+l = 2
+
+# Training and evaluation parameters
+training_params = {
+    "N_samples": 10, # Number of random initial states to sample
+    "N_training_iterations": 10000, # Number of training iterations
+    "learning_rate": 0.01, # Learning rate
+    "convergence_threshold": 1e-6,
+    "batch_size": 16,
+    "eval_batch_size": 16,
+    "evaluation_time_steps": 50,
+}
+

@@ -121,9 +121,11 @@ def generate_povm2(measurement_outcome, params, dim):
 
         where S is a unitary parametrized by dim^2 parameters, and D is a diagonal matrix with eigenvalues parametrized by dim parameters.
     """
-    S = generate_unitary(params, dim=dim) # All parameters for unitary
+    assert len(params) == dim * (dim + 1), "Number of real parameters must be N * (N + 1) for an NxN POVM element."
 
-    d_vec = jnp.astype(jnp.sin( params[dim*(dim-1):dim*dim] ) ** 2, jnp.complex128) # Last #dim parameters for eigenvalues
+    S = generate_unitary(params[0:dim*dim], dim=dim) # All parameters for unitary
+
+    d_vec = jnp.astype(jnp.sin( params[dim*dim:dim*(dim+1)] ) ** 2, jnp.complex128) # Last #dim parameters for eigenvalues
     d_vec = 1e-6 + (1 - 2e-6) * d_vec # Avoid exactly 0 or 1 eigenvalues
 
     return jnp.where(measurement_outcome == 1,
@@ -183,7 +185,7 @@ def init_decay_gate_analytical(N_chains, gamma):
 
 def init_povm_gate(key, N_chains):
     base_dim = 2**N_chains
-    N_povm_params = base_dim**2
+    N_povm_params = base_dim*(base_dim+1)
     povm_gate = Gate(
         gate=lambda msmt, params: generate_povm2(msmt, params, dim=base_dim),
         initial_params = jax.random.uniform(key, (N_povm_params,), minval=0.0, maxval=2*jnp.pi),
@@ -230,12 +232,11 @@ def init_fgrape_protocol(key, N_chains, gamma):
 def generate_random_bloch_state(key, N_chains, noise_level):
     """
         Generate a random density matrix on Bloch sphere (cos(theta/2)*|00 ... 0> + sin(theta/2)*exp(i*phi)*sin(theta/2)*|11 ... 1>)
-        plus noise term eps * |00 ... 0><00 ... 0| where eps is drawn from uniform distribution between ±noise_level
+        plus noise term eps * identity where eps is drawn from uniform distribution between 0 and +noise_level
         and theta, phi are drawn from uniform distributions.
     """
     
     subkey1, subkey2, subkey3 = jax.random.split(key, 3)
-    eps = jax.random.uniform(subkey3, minval=-noise_level, maxval=noise_level)
     theta = jax.random.uniform(subkey1, minval=0.0, maxval=jnp.pi)
     phi = jax.random.uniform(subkey2, minval=0.0, maxval=2*jnp.pi)
     alpha = jnp.cos(theta / 2)
@@ -249,25 +250,24 @@ def generate_random_bloch_state(key, N_chains, noise_level):
         + beta * psi_one
     )
     
-    psi_noise = eps * psi_zero
+    rho_noise = jnp.diag(jax.random.uniform(subkey3, minval=0, maxval=noise_level, shape=(2**N_chains,)))
 
     if noise_level == float("inf"):
-        return ket2dm(psi_zero)
+        return identity(2**N_chains) / (2**N_chains)
     elif noise_level == 0:
         return ket2dm(psi)
     else:
-        rho_out = ket2dm(psi) + ket2dm(psi_noise)
+        rho_out = ket2dm(psi) + rho_noise
         return rho_out / jnp.trace(rho_out)
 generate_random_bloch_state = jax.jit(generate_random_bloch_state, static_argnames=['N_chains','noise_level'])
 
 def generate_random_discrete_state(key, N_chains, noise_level):
     """
         Generate a random density matrix which is either |00 .. 0><00 .. 0| or |11 .. 1><11 .. 1|
-        plus noise term eps * |00 .. 0><00 .. 0| where eps is drawn from uniform distribution between ±noise_level.
+        plus noise term eps * identity where eps is drawn from uniform distribution between 0 and +noise_level.
     """
 
     subkey1, _, subkey3 = jax.random.split(key, 3) # 3 keys for consistency with generate_random_bloch_state
-    eps = jax.random.uniform(subkey3, minval=-noise_level, maxval=noise_level)
 
     psi_one  = basis(2**N_chains, 0)
     psi_zero = basis(2**N_chains, 2**N_chains - 1)
@@ -276,17 +276,22 @@ def generate_random_discrete_state(key, N_chains, noise_level):
         psi_zero,
         psi_one
     )
-    
-    psi_noise = eps * psi_zero
+
+    rho_noise = jnp.diag(jax.random.uniform(subkey3, minval=0, maxval=noise_level, shape=(2**N_chains,)))
 
     if noise_level == float("inf"):
-        return psi_zero
+        return identity(2**N_chains) / (2**N_chains)
     elif noise_level == 0:
         return ket2dm(psi)
     else:
-        rho_out = ket2dm(psi) + ket2dm(psi_noise)
+        rho_out = ket2dm(psi) + rho_noise
         return rho_out / jnp.trace(rho_out)
 generate_random_discrete_state = jax.jit(generate_random_discrete_state, static_argnames=['N_chains','noise_level'])
+
+def generate_excited_state(key, N_chains, noise_level):
+    psi_zero  = basis(2**N_chains, 2**N_chains - 1)
+    return ket2dm(psi_zero)
+generate_excited_state = jax.jit(generate_excited_state, static_argnames=['N_chains'])
 
 # Tests for the implementations
 def test_implementations():
@@ -321,7 +326,7 @@ def test_implementations():
         key = jax.random.PRNGKey(i)
         key, subkey = jax.random.split(key, 2)
 
-        for f,N_params in [(generate_povm1, 4), (lambda msmt, params: generate_povm2(msmt, params, 4), 16)]:
+        for f,N_params in [(generate_povm1, 4), (lambda msmt, params: generate_povm2(msmt, params, 4), 4*(4+1))]:
             params = jax.random.uniform(subkey, (N_params,), minval=0.0, maxval=2*jnp.pi)
 
             M_0 = f(-1, params)
