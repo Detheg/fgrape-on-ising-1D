@@ -126,7 +126,7 @@ def generate_povm2(measurement_outcome, params, dim):
     S = generate_unitary(params[0:dim*dim], dim=dim) # All parameters for unitary
 
     d_vec = jnp.astype(jnp.sin( params[dim*dim:dim*(dim+1)] ) ** 2, jnp.complex128) # Last #dim parameters for eigenvalues
-    d_vec = 1e-6 + (1 - 2e-6) * d_vec # Avoid exactly 0 or 1 eigenvalues
+    d_vec = 1e-10 + (1 - 2e-10) * d_vec # Avoid exactly 0 or 1 eigenvalues
 
     return jnp.where(measurement_outcome == 1,
         S @ jnp.diag(d_vec) @ S.conj().T,
@@ -292,6 +292,11 @@ def generate_excited_state(key, N_chains, noise_level):
     psi_zero  = basis(2**N_chains, 2**N_chains - 1)
     return ket2dm(psi_zero)
 generate_excited_state = jax.jit(generate_excited_state, static_argnames=['N_chains'])
+
+def generate_ground_state(key, N_chains, noise_level):
+    psi_one  = basis(2**N_chains, 0)
+    return ket2dm(psi_one)
+generate_ground_state = jax.jit(generate_ground_state, static_argnames=['N_chains'])
 
 # Tests for the implementations
 def test_implementations():
