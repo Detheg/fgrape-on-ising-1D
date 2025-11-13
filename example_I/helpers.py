@@ -293,27 +293,82 @@ def init_fgrape_protocol(key, n, N_chains, gamma):
 
     return [first_gate, T_half_gate, decay_gate, T_half_gate, ptrace_gate, povm_gate, U_gate]
 
-# Function to generate random initial states
-def generate_random_state(key, N_chains):
-    """ Generate a pair of up or down states with equal probability. """
-    random_value = jax.random.uniform(key, minval=0.0, maxval=1.0)
+# Function to generate random states
+def generate_random_bloch_state(key, N_chains, noise_level):
+    """
+        Generate a random density matrix on Bloch sphere (cos(theta/2)*|000> + sin(theta/2)*exp(i*phi)*sin(theta/2)*|111>)
+        plus noise term eps * |000><000| where eps is drawn from uniform distribution between ±noise_level
+        and theta, phi are drawn from uniform distributions.
+    """
+    
+    subkey1, subkey2, subkey3 = jax.random.split(key, 3)
+    eps = jax.random.uniform(subkey3, minval=-noise_level, maxval=noise_level)
+    theta = jax.random.uniform(subkey1, minval=0.0, maxval=jnp.pi)
+    phi = jax.random.uniform(subkey2, minval=0.0, maxval=2*jnp.pi)
+    alpha = jnp.cos(theta / 2)
+    beta = jnp.sin(theta / 2) * jnp.exp(1j * phi)
 
     psi_one  = basis(2, 0)
     psi_zero = basis(2, 1)
-    psi = jnp.where(random_value < 0.5, psi_one, psi_zero)
 
-    return ket2dm(tensor(*([psi]*N_chains)))
-generate_random_state = jax.jit(generate_random_state, static_argnames=['N_chains'])
+    psi = (
+        alpha * tensor(psi_zero, psi_zero, psi_zero)
+        + beta * tensor(psi_one, psi_one, psi_one)
+    )
+    
+    psi_noise = eps * tensor(psi_zero, psi_zero, psi_zero)
 
-# Function to generate initial states
-def generate_all_states(N_chains):
+    if noise_level == float("inf"):
+        return ket2dm(tensor(psi_zero, psi_zero, psi_zero))
+    elif noise_level == 0:
+        return ket2dm(psi)
+    else:
+        rho_out = ket2dm(psi) + ket2dm(psi_noise)
+        return rho_out / jnp.trace(rho_out)
+generate_random_bloch_state = jax.jit(generate_random_bloch_state, static_argnames=['N_chains','noise_level'])
+
+def generate_random_discrete_state(key, N_chains, noise_level):
+    """
+        Generate a random density matrix which is either |000><000| or |111><111|
+        plus noise term eps * |000><000| where eps is drawn from uniform distribution between ±noise_level.
+    """
+
+    subkey1, _, subkey3 = jax.random.split(key, 3) # 3 keys for consistency with generate_random_bloch_state
+    eps = jax.random.uniform(subkey3, minval=-noise_level, maxval=noise_level)
+
     psi_one  = basis(2, 0)
     psi_zero = basis(2, 1)
 
-    return [ket2dm(tensor(*([psi_zero]*N_chains))), ket2dm(tensor(*([psi_one]*N_chains)))]
+    psi = jnp.where(jax.random.uniform(subkey1) < 0.5,
+        tensor(psi_zero, psi_zero, psi_zero),
+        tensor(psi_one, psi_one, psi_one)
+    )
+    
+    psi_noise = eps * tensor(psi_zero, psi_zero, psi_zero)
+
+    if noise_level == float("inf"):
+        return ket2dm(tensor(psi_zero, psi_zero, psi_zero))
+    elif noise_level == 0:
+        return ket2dm(psi)
+    else:
+        rho_out = ket2dm(psi) + ket2dm(psi_noise)
+        return rho_out / jnp.trace(rho_out)
+generate_random_discrete_state = jax.jit(generate_random_discrete_state, static_argnames=['N_chains','noise_level'])
 
 # Tests for the implementations
 def test_implementations():
+    # Test random state generation
+    for callab in [lambda key, N_chains: generate_random_discrete_state(key, N_chains, noise_level=1.0), lambda key, N_chains: generate_random_bloch_state(key, N_chains, noise_level=1.0)]:
+        for i in range(10):
+            key = jax.random.PRNGKey(i)
+            rho = callab(key, N_chains=2)
+
+            assert jnp.allclose(rho, rho.conj().T), "Generated state is not Hermitian"
+            assert jnp.isclose(jnp.trace(rho), 1.0), "Generated state does not have trace 1"
+            eigvals = jnp.linalg.eigvals(rho)
+            assert jnp.all(eigvals >= -1e-10), "Generated state is not positive semidefinite"
+
+
     # Test unitary and special unitary generators
     for i in range(10):
         key = jax.random.PRNGKey(i)

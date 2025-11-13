@@ -1,0 +1,10 @@
+Here, different custom strategies can be tried out. helpers.py was reprogrammed and then the notebook rerun, deleteing the plot.
+Result was, that the simple strategy performed with similar behaviour as the best ones trained algorithmically.
+It had about 70% fidelity at the end of 100 segments even though it was not doing error correction.
+
+Physics details
+
+N_chains = 2, n = 2
+jump_ops = [gamma * embed(sigmam(), idx, N_chains*n) for idx in range(N_chains*n)] with gamma=0.25
+initial and target states are density matrices (cos(theta/2)*|01> + sin(theta/2)*exp(i*phi)*|10>)
+with random theta in [0, pi], phi in [0, 2pi] (uniform distributions).

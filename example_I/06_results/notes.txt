@@ -1,0 +1,8 @@
+Simulation details:
+
+N_chains = 2, n = 2
+jump_ops = [gamma * embed(sigmam(), idx, N_chains*n) for idx in range(N_chains*n)] with gamma=0.25
+initial and target states were (alpha*|01> + beta*|10>) with random, complex alpha, beta.
+
+Initial state includes some noise terms eps1 * |00> + eps2 * |11> where
+eps1, eps2 are drawn from random uniform distributions between ±1.0

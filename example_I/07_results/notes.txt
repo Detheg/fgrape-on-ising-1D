@@ -1,0 +1,13 @@
+Simulation details:
+
+N_chains = 2, n = 2
+jump_ops = [gamma * embed(sigmam(), idx, N_chains*n) for idx in range(N_chains*n)] with gamma=0.25
+initial and target states are density matrices (cos(theta/2)*|01> + sin(theta/2)*exp(i*phi)*|10>)
+with random theta in [0, pi], phi in [0, 2pi] (uniform distributions).
+
+To initial state noise term  (eps * |00><00|) was added where
+eps random uniform distributions between ±noise (noise level is written into filenames).
+
+Training is performed with noise and evaluation without.
+
+Every model is randomly initialized 10 times. We select the one with best mean fidelity across 100 segments.

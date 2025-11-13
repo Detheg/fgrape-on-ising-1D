@@ -1,0 +1,1 @@
+Here, a system with one povm measurement per error correction was investigated on logical qubits encoded as three physical.
