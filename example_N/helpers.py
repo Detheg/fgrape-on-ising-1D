@@ -1,5 +1,4 @@
 # ruff: noqa
-from curses import keyname
 import sys, os
 sys.path.append(os.path.abspath("./../feedback-grape"))
 sys.path.append(os.path.abspath("./../"))
@@ -7,15 +6,17 @@ sys.path.append(os.path.abspath("./../"))
 # ruff: noqa
 from feedback_grape.fgrape import Gate # type: ignore
 from feedback_grape.utils.states import basis # type: ignore
-from feedback_grape.utils.tensor import tensor # type: ignore
+from feedback_grape.utils.fidelity import ket2dm, fidelity # type: ignore
+from feedback_grape.utils.operators import sigmap, sigmam # type: ignore
+from typing import Callable
+import dynamiqs as dq
 import jax.numpy as jnp
 import jax
-from feedback_grape.utils.fidelity import ket2dm, fidelity # type: ignore
 from tqdm import tqdm
 import numpy as np
+from library.utils.qubit_chain_1D import embed
 
 jax.config.update("jax_enable_x64", True)
-
 
 # All the operators we need
 def generate_traceless_hermitian(params, dim):
@@ -79,7 +80,7 @@ def generate_povm(measurement_outcome, params, dim):
     S = generate_unitary(params[0:dim*dim], dim=dim) # All parameters for unitary
 
     d_vec = jnp.astype(jnp.sin( params[dim*dim:dim*(dim+1)] ) ** 2, jnp.complex128) # Last #dim parameters for eigenvalues
-    d_vec = 1e-10 + (1 - 2e-10) * d_vec # Avoid exactly 0 or 1 eigenvalues
+    d_vec = 1e-8 + (1 - 2e-8) * d_vec # Avoid exactly 0 or 1 eigenvalues
 
     return jnp.where(measurement_outcome == 1,
         S @ jnp.diag(d_vec) @ S.conj().T,
@@ -87,60 +88,45 @@ def generate_povm(measurement_outcome, params, dim):
     )
 generate_povm = jax.jit(generate_povm, static_argnames=['dim'])
 
-def generate_kraus_superoperator(N_qubits, gamma_p, gamma_m):
-    # 1. Construct Kraus operators for single qubit jumps (k1, k2 correspond to sig^-, k3, k4 to sig^+)
-    gamma = gamma_p + gamma_m
-    q = jnp.exp(-gamma)
-    q2 = q**0.5
-    q3 = (1 - q)**0.5
-    p2 = (gamma_p / gamma)**0.5
-    m2 = (gamma_m / gamma)**0.5
+def generate_jump_superoperator(N_qubits, gamma_p, gamma_m):
+    # 1. Define jump operators for each qubit
+    jump_ops = [
+        gamma_p**0.5 * embed(sigmap(), j, N_qubits)
+        for j in range(N_qubits)
+    ] + [
+        gamma_m**0.5 * embed(sigmam(), j, N_qubits)
+        for j in range(N_qubits)
+    ]
 
-    k1 = m2*jnp.array([
-        [q2, 0.0],
-        [0.0, 1.0]
-    ], dtype=jnp.complex128)
-    k2 = m2*jnp.array([
-        [0.0, 0.0],
-        [q3, 0.0]
-    ], dtype=jnp.complex128)
-    k3 = p2*jnp.array([
-        [1.0, 0.0],
-        [0.0, q2]
-    ], dtype=jnp.complex128)
-    k4 = p2*jnp.array([
-        [0.0, q3],
-        [0.0, 0.0]
-    ], dtype=jnp.complex128)
+    # 2. Define superoperator for lindblad evolution
+    N = 2**N_qubits
+    I = jnp.eye(N, dtype=jnp.complex128)
+    O = jnp.zeros((N,N), dtype=jnp.complex128)
 
-    K_each = [k1, k2, k3, k4]
-
-    # 2. Construct Kraus operators for N_qubits qubits
-    #.   by going through all combinations of k1, k2, k3, and k4 for each qubit
-    K = []
-    indices = [0] * N_qubits
-    while indices[0] < 4:
-        ops = [K_each[idx] for idx in indices]
-        K_i = tensor(*ops)
-        K_i = np.array(K_i) # Numpy arrays because they will be constant throughout (JAX should not recalculate them each time)
-        K.append(K_i)
-        
-        indices[-1] += 1
-        for i in range(N_qubits-1, 0, -1):
-            if indices[i] >= 4:
-                indices[i] = 0
-                indices[i-1] += 1
+    super_op = dq.mepropagator(O, jump_ops=jump_ops, tsave=[0, 1]).propagators[1].to_jax()
 
     # 3. Define function for state transition under lindblad evolution
     def lindblad_solution(rho):
-        return sum([K_i @ rho @ K_i.conj().T for K_i in K])
-        #return jax.lax.fori_loop(0, len(K), lambda i, carry: carry + K[i] @ rho @ K[i].conj().T, jnp.zeros_like(rho))
+        return (super_op @ rho.flatten()).reshape(N, N)
 
+    return jax.jit(lindblad_solution)
+
+def generate_jump_superoperator_single_qubit(gamma_p, gamma_m):
+    gamma = gamma_p + gamma_m
+    p = gamma_p / gamma if gamma > 0 else 0.5
+    q = np.exp(-gamma)
+
+    # 3. Define function for state transition under lindblad evolution
+    def lindblad_solution(rho):
+        return jnp.array([
+            [p + q*(rho.at[0,0].get() - p), q**0.5 * rho.at[0,1].get()],
+            [q**0.5 * rho.at[1,0].get(), (1 - p) - q*(rho.at[0,0].get() - p)],
+        ])
     return jax.jit(lindblad_solution)
 
 # Functions which initialize gates
 def init_decay_gate(N_qubits, gamma_p, gamma_m):
-    decay_fun = generate_kraus_superoperator(N_qubits, gamma_p, gamma_m)
+    decay_fun = generate_jump_superoperator(N_qubits, gamma_p, gamma_m)
 
     decay_gate = Gate(
         gate=lambda rho, _: decay_fun(rho),
@@ -284,7 +270,7 @@ def test_implementations():
             assert jnp.all(jnp.linalg.eigvals(M_1) >= 0), "POVM element M_1 is not positive semidefinite"
 
 def calculate_baseline(N_qubits: int, gamma_p: float, gamma_m: float, evaluation_time_steps: int, batch_size: int, generate_state: callable, key=jax.random.PRNGKey(0)):
-    decay_superoperator = generate_kraus_superoperator(N_qubits, gamma_p, gamma_m)
+    decay_superoperator = generate_jump_superoperator(N_qubits, gamma_p, gamma_m)
 
     # Evolve all basis states and compute fidelities
     keys = jax.random.split(key, batch_size)
@@ -309,7 +295,7 @@ def calculate_baseline(N_qubits: int, gamma_p: float, gamma_m: float, evaluation
 
     propagate_single_timestep_vmap = jax.vmap(jax.jit(propagate_single_timestep))
 
-    for i in tqdm(range(evaluation_time_steps)):
+    for i in range(evaluation_time_steps):
         states, fid = propagate_single_timestep_vmap(states, target_states)
         fidelities_each[:, i+1] = fid
 
@@ -321,3 +307,171 @@ def calculate_baseline(N_qubits: int, gamma_p: float, gamma_m: float, evaluation
         states_each.append(states.copy())
 
     return fidelities_each, states_each
+
+def calculate_baseline_single_qubit(gamma_p: float, gamma_m: float, evaluation_time_steps: int, batch_size: int, generate_state: callable, key=jax.random.PRNGKey(0)):
+    decay_superoperator = generate_jump_superoperator_single_qubit(gamma_p, gamma_m)
+
+    # Evolve all basis states and compute fidelities
+    keys = jax.random.split(key, batch_size)
+    states = jnp.array([generate_state(key, N_qubits=1) for key in keys])
+    target_states = jnp.array([generate_state(key, N_qubits=1) for key in keys])
+    states_each = [states.copy()]
+
+    fidelities_each = np.zeros((len(states), evaluation_time_steps+1))
+    for i, (state, target_state) in enumerate(zip(states, target_states)):
+        fidelities_each[i, 0] = fidelity(
+            C_target=target_state,
+            U_final=state,
+            evo_type="density",
+        )
+
+    def propagate_single_timestep(rho, rho_target):
+        tmp = decay_superoperator(rho)
+
+        fid = fidelity(C_target=rho_target, U_final=tmp, evo_type="density")
+
+        return tmp, fid
+
+    propagate_single_timestep_vmap = jax.vmap(jax.jit(propagate_single_timestep))
+
+    for i in range(evaluation_time_steps):
+        states, fid = propagate_single_timestep_vmap(states, target_states)
+        fidelities_each[:, i+1] = fid
+
+        for j, rho in enumerate(states):
+            assert np.all(np.isclose(rho, rho.conj().T)), "State is not Hermitian"
+            assert np.isclose(np.trace(rho).real, 1.0), "State is not normalized"
+            assert np.all(np.linalg.eigvalsh(rho) >= -1e-10), "State is not positive semidefinite"
+
+        states_each.append(states.copy())
+
+    return fidelities_each, states_each
+
+# Functions to test a custom protocol definition
+# Validate parameters
+def __validate_protocol(protocol, N_qubits):
+    N = 2**N_qubits
+
+    def check_povm(povm_p, povm_m, N):
+        assert povm_p.shape == (N,N), "Povm operator has incorrect shape."
+        assert povm_m.shape == (N,N), "Povm operator has incorrect shape."
+        assert jnp.allclose(povm_p.conj().T @ povm_p + povm_m.conj().T @ povm_m, jnp.eye(N)), "Povm operators do not sum to identity."
+    def check_unitary(U, N):
+        assert U.shape == (N,N), "Unitary operator has incorrect shape."
+        assert jnp.allclose(U.conj().T @ U, jnp.eye(N)), "Unitary operator is not unitary."
+
+    for key, value in protocol.items():
+        if key[:4] == "povm" and key[-1] == "+":
+            check_povm(value, protocol[f"{key[:-1]}-"], N)
+        elif key[0] == "U":
+            check_unitary(value, N)
+
+# Construct lookup table for protocol
+def lut_from_protocol(protocol, N_qubits, N_meas):
+    __validate_protocol(protocol, N_qubits)
+
+    povm1_init_p = protocol["povm1_init_+"]
+    povm1_init_m = protocol["povm1_init_-"]
+
+    N = 2**N_qubits
+
+    initial_params = (
+        [[]] # Placeholder for Quantum channel with no parameters
+        + [jnp.array(povm1_init_p.real.flatten().tolist() + povm1_init_p.imag.flatten().tolist() + povm1_init_m.real.flatten().tolist() + povm1_init_m.imag.flatten().tolist())] # First POVM (the only one which is applied at the start)
+        + [jnp.zeros(N*N*4)]*(N_meas - 1) # placeholder POVMs which are not applied
+        + [jnp.zeros(N*N*2)] # placeholder unitary which is not applied at the start
+    )
+
+    lookup_table = []
+    for i in range(N_meas):
+        n = i+1
+        col = []
+        for meas_hist in range(2**n):
+            meas_bin = bin(meas_hist)[2:].zfill(n).replace('1', '-').replace('0', '+')
+            params = []
+            
+            for povm_idx in range(N_meas):
+                if n == povm_idx or n == N_meas:
+                    povm_p = protocol[f"povm{povm_idx+1}_{meas_bin}+"]
+                    povm_m = protocol[f"povm{povm_idx+1}_{meas_bin}-"]
+                else:
+                    # Not enough measurements yet for this POVM, fill with zeros
+                    povm_p = jnp.zeros((N,N))+1
+                    povm_m = jnp.zeros((N,N))+1
+
+                params.extend([
+                    jnp.array(op.real.flatten().tolist() + op.imag.flatten().tolist())
+                    for op in [povm_p, povm_m]
+                ])
+
+            if n < N_meas:
+                # Not enough measurements yet for this unitary, fill with zeros because it wont be applied
+                U = jnp.zeros((N,N))
+            else:
+                U = protocol[f"U_{meas_bin}"]
+
+            params.append(jnp.array(U.real.flatten().tolist() + U.imag.flatten().tolist()))
+            flattened_params = jnp.concatenate(params)
+            col.append(flattened_params)
+
+        col.extend([jnp.array([0]*len(flattened_params))]*(2**(N_meas) - 2**(n))) # Fill up to full size with zeros
+        lookup_table.append(col)
+    
+    lut = {
+        "initial_params": initial_params,
+        "lookup_table": lookup_table,
+    }
+    return lut
+
+def init_system_params_for_custom_protocol(N_qubits, N_meas, gamma_p, gamma_m):
+    N = 2**N_qubits
+
+    @jax.jit
+    def unitary_fun(params):
+        real = params[:(N*N)].reshape((N,N))
+        imag = params[(N*N):].reshape((N,N))
+        return real + 1j*imag
+
+    @jax.jit
+    def povm_fun(meas, params):
+        start = (meas == -1) * 2 * N*N
+        real = jax.lax.dynamic_slice(params, (start,), (N*N,)).reshape((N,N))
+        imag = jax.lax.dynamic_slice(params, (start + N*N,), (N*N,)).reshape((N, N))
+        return real + 1j*imag
+
+    decay_gate = init_decay_gate(N_qubits, gamma_p, gamma_m)
+
+    povm_gate = Gate(
+        gate=povm_fun,
+        initial_params = jnp.concatenate([jnp.eye(N).flatten(), jnp.zeros((N*N*3))]),
+        measurement_flag=True,
+    )
+    U_gate = Gate(
+        gate=unitary_fun,
+        initial_params = jnp.concatenate([jnp.eye(N).flatten(), jnp.zeros((N*N))]),
+        measurement_flag=False,
+    )
+
+    return [decay_gate] + [povm_gate] * N_meas + [U_gate]
+
+
+# Formatters
+experiments_format = [ # Format of variables as tuples (name, type, required by grape, required by lut, required by rnn)
+    ("t", int, True, True, True), # number timesteps (or segments)
+    ("l", int, False, True, False), # LUT memory
+    ("w", list, True, True, True), # reward weights
+    ("Nqubits", int, True, True, True), # number of chains
+    ("Nmeas", int, True, True, True), # number of measurements per timestep
+    ("gammap", float, True, True, True), # sig^+ rate
+    ("gammam", float, True, True, True), # sig^- rate
+    ("rhot", str, True, True, True), # training state type
+    ("rhoe", str, True, True, True), # evaluation state type
+]
+
+# State generation functions
+state_types = {
+    "discrete": generate_random_discrete_state,
+    "bloch": generate_random_bloch_state,
+    "excited": generate_excited_state,
+    "ground": generate_ground_state,
+}

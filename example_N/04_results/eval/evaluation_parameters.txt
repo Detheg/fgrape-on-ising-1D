@@ -1,0 +1,9 @@
+Physical parameters:
+gamma_p_global: None
+gamma_m_global: None
+evaluation_state_type: None
+
+Evaluation parameters:
+evaluation_time_steps: 200
+batch_size: 512 (for 6x6 grid of smallest gamma_p and gamma_m)
+batch_size: 128 (for all others)
