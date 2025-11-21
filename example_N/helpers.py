@@ -104,7 +104,25 @@ def generate_jump_superoperator(N_qubits, gamma_p, gamma_m):
     O = jnp.zeros((N,N), dtype=jnp.complex128)
 
     super_op = dq.mepropagator(O, jump_ops=jump_ops, tsave=[0, 1]).propagators[1].to_jax()
+    # Number of nonzero elements in super_op:
+    # N_qubits = 1 : 5.3 %, 
+    # N_qubits = 2 : 5.3 %, 
+    # N_qubits = 3 : 5.3 %, 
+    # N_qubits = 4 : 5.3 %,
+    # N_qubits = 5 : 5.3 %,
 
+    # Count nonzero elements
+    nnz = jnp.sum(super_op != 0).item()
+    print(f"Lindblad superoperator for {N_qubits} qubits with gamma+={gamma_p}, gamma-={gamma_m} has {nnz} nonzero elements out of {N**4} ({nnz / N**4 * 100:.6f} %)")
+    longest = 0
+    for row in super_op:
+        row_nnz = jnp.sum(row != 0).item()
+        if row_nnz > longest:
+            longest = row_nnz
+    print(f"Longest row has {longest} nonzero elements out of {N} ({longest / N * 100:.6f} %)")
+
+
+    print(super_op)
     # 3. Define function for state transition under lindblad evolution
     def lindblad_solution(rho):
         return (super_op @ rho.flatten()).reshape(N, N)
@@ -159,6 +177,16 @@ def init_unitary_gate(key, N_qubits):
 
     return U_gate
 
+def init_identity_gate():
+    U_gate = Gate(
+        gate=lambda rho, _: rho,
+        initial_params = jnp.array([]),
+        measurement_flag = False,
+        quantum_channel_flag = True,
+    )
+
+    return U_gate
+
 # Functions which initialize gate combinations for the protocols
 def init_fgrape_protocol(key, N_qubits, N_meas, gamma_p, gamma_m):
     subkey1, subkey2 = jax.random.split(key, 2)
@@ -168,6 +196,15 @@ def init_fgrape_protocol(key, N_qubits, N_meas, gamma_p, gamma_m):
     U_gate = init_unitary_gate(subkey2, N_qubits)
 
     return [decay_gate] + [povm_gate] * N_meas + [U_gate]
+
+def init_fgrape_protocol_wo_decay(key, N_qubits, N_meas, gamma_p, gamma_m):
+    subkey1, subkey2 = jax.random.split(key, 2)
+
+    identity_gate = init_identity_gate()
+    povm_gate = init_povm_gate(subkey1, N_qubits)
+    U_gate = init_unitary_gate(subkey2, N_qubits)
+
+    return [identity_gate] + [povm_gate] * N_meas + [U_gate]
 
 # Function to generate random states
 def generate_random_bloch_state(key, N_qubits):

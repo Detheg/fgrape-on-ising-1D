@@ -382,6 +382,9 @@ plt.rcParams.update({
     'ytick.labelsize' : 12,
     'axes.labelsize': 12,
     'legend.fontsize': 12,
+    'legend.handlelength': 1.0, # shorter handles
+    'legend.handletextpad': 0.5, # less padding between handle and text
+    'legend.columnspacing': 1.0, # less spacing between columns
     'axes.linewidth': 0.800, # 0.282 mm
     'axes.formatter.use_mathtext': True,
     'xtick.major.width': 0.800, # 0.282 mm
@@ -403,9 +406,12 @@ plt.rcParams.update({
     'axes.grid': False,
     'savefig.bbox': 'tight',
     'savefig.pad_inches': 0,
-    'text.usetex': True, # Disable for faster plotting without LaTeX
-    'font.sans-serif' : 'Computer Modern Sans Serif', # Only works with LaTeX
+    #'text.usetex': True, # Disable for faster plotting without LaTeX
+    #'font.sans-serif' : 'Computer Modern Sans Serif', # Only works with LaTeX
 })
+
+from matplotlib.patheffects import Normal, SimpleLineShadow
+white_outline = [SimpleLineShadow(shadow_color="white", linewidth=4, alpha=1, offset=(0,0)), Normal()] # White outline for better visibility
 
 # Helper to open files
 def open_from_dir(dir_, exclude=""):
@@ -446,7 +452,7 @@ def open_from_dir(dir_, exclude=""):
     print("Done.")
 
     longest = max([len(d[2]) for d in data])
-    fidelities_mat = np.zeros((len(data), longest))
+    fidelities_mat = np.full((len(data), longest), -1.0)  # Fill with -1.0 for missing values
 
     params_each = [d[1] for d in data]
     params_grouped = group_params(params_each)
@@ -474,11 +480,11 @@ def select_best_runs(fidelities_mat, params_each, objective_fun=lambda fidelitie
     # Group data by all but the sample "s" in filename. From each group, select the one with highest average fidelity
     best_data = {}
     for idx, (fidelities, group_key) in enumerate(zip(fidelities_mat, [tuple([params[group] for group in group_by]) for params in params_each])):
-        value = objective_fun(fidelities)
+        value = objective_fun(fidelities[fidelities != -1.0]) # Exclude missing values (-1.0)
         if group_key not in best_data or value > best_data[group_key][1]:
             best_data[group_key] = (fidelities, value, idx)
 
-    fidelities_best_mat = np.zeros((len(best_data), fidelities_mat.shape[1]))
+    fidelities_best_mat = np.full((len(best_data), fidelities_mat.shape[1]), -1.0) # Fill with -1.0 for missing values
     params_grouped_best = {
         param: np.zeros(len(best_data), dtype=dtype) if dtype in [int, float] else [None]*len(best_data)
         for param, dtype, _, _, _ in experiments_format + [("s", int, None, None, None)]
@@ -507,10 +513,10 @@ def grid_grouped_params(values, params_grouped, x_param, y_param):
 
     return x_values, y_values, grid
 
-def sort_by(fidelities_mat, params_each, params_each2, ignored_keys=[]):
+def sort_by(fidelities_mat, params_each, params_each2, ignored_keys=[], do_remove_missing=False):
     # Sort fidelities_mat and params_each to match entries in params_each2
 
-    assert len(params_each) == len(params_each2), "Length of params_each and params_each2 must be the same for sorting."
+    assert len(params_each) == len(params_each2) or do_remove_missing, "Length of params_each and params_each2 must be the same for sorting."
     idx = []
     for p2 in params_each2:
         for j, p in enumerate(params_each):
@@ -523,7 +529,8 @@ def sort_by(fidelities_mat, params_each, params_each2, ignored_keys=[]):
                 idx.append(j)
                 break
         else:
-            raise ValueError(f"No matching entry found during sorting for p={p}.")
+            if not do_remove_missing:
+                raise ValueError(f"No matching entry found during sorting for p={p}.")
 
     fidelities_mat_sorted = fidelities_mat[idx, :]
     params_each_sorted = [params_each[i] for i in idx]
@@ -539,18 +546,26 @@ def extract_time_constants(fidelities_mat):
 
     def exp_decay(t, a, tau):
         return a * np.exp(-t / tau) + (1 - a)
-    t_data = np.arange(fidelities_mat.shape[1])
 
     for i, fidelities in enumerate(fidelities_mat):
+        # Exclude missing values (-1.0) from fitting
+        fidelities = fidelities[fidelities != -1.0]
+
+        # Uncomment to fit exponential to region where fidelities close to their equilibrium value
+        #equilibrium_value = np.mean(fidelities[-10:])
+        #fidelity_cutoff = 1 - (1 - equilibrium_value) * 0.90  # 10% above equilibrium
+        #idx = 0
+        #for idx,f in enumerate(fidelities):
+        #    if f < fidelity_cutoff: break
+        #fidelities = fidelities[:idx]
+
         # Fit exponential decay to fidelities
-        #try:
+        t_data = np.arange(len(fidelities))
 
         popt, pcov = curve_fit(exp_decay, t_data, fidelities, p0=(1, 10), bounds=(0, [1.0, np.inf]))
         a, tau = popt
         a_std, tau_std = np.sqrt(np.diag(pcov))
-        #except Exception as e:
-        #    a, tau, c = np.nan, np.nan, np.nan  # If fitting fails, set all to NaN
-        #    a_std, tau_std, c_std = np.nan, np.nan, np.nan
+
         a_arr[i] = a
         tau_arr[i] = tau
         a_std_arr[i] = a_std
