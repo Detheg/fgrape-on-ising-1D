@@ -406,8 +406,10 @@ plt.rcParams.update({
     'axes.grid': False,
     'savefig.bbox': 'tight',
     'savefig.pad_inches': 0,
-    #'text.usetex': True, # Disable for faster plotting without LaTeX
-    #'font.sans-serif' : 'Computer Modern Sans Serif', # Only works with LaTeX
+    'text.usetex': True, # Disable for faster plotting without LaTeX
+    'font.sans-serif' : 'Computer Modern Sans Serif', # Only works with LaTeX
+    #'font.weight': 'heavy', # PARAMETERS DONT WORK. FIX FONT WEIGHT NEXT TIME WHEN WORKING ON A THESIS!
+    #'axes.labelweight': 'heavy',
 })
 
 from matplotlib.patheffects import Normal, SimpleLineShadow

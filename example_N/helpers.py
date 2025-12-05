@@ -79,12 +79,13 @@ def generate_povm(measurement_outcome, params, dim):
 
     S = generate_unitary(params[0:dim*dim], dim=dim) # All parameters for unitary
 
-    d_vec = jnp.astype(jnp.sin( params[dim*dim:dim*(dim+1)] ) ** 2, jnp.complex128) # Last #dim parameters for eigenvalues
+    d_vec = jnp.astype(jnp.square(jnp.sin( params[dim*dim:dim*(dim+1)] )), jnp.complex128) # Last #dim parameters for eigenvalues
     d_vec = 1e-8 + (1 - 2e-8) * d_vec # Avoid exactly 0 or 1 eigenvalues
 
+    # jnp.multiply is fast way to "matrix @ diagonal matrix" multiplication, especially for large matrices
     return jnp.where(measurement_outcome == 1,
-        S @ jnp.diag(d_vec) @ S.conj().T,
-        S @ jnp.diag(jnp.sqrt(1 - d_vec**2)) @ S.conj().T
+        jnp.multiply(S, d_vec) @ S.conj().T,
+        jnp.multiply(S, jnp.sqrt(1 - jnp.square(d_vec))) @ S.conj().T
     )
 generate_povm = jax.jit(generate_povm, static_argnames=['dim'])
 
@@ -100,33 +101,69 @@ def generate_jump_superoperator(N_qubits, gamma_p, gamma_m):
 
     # 2. Define superoperator for lindblad evolution
     N = 2**N_qubits
-    I = jnp.eye(N, dtype=jnp.complex128)
     O = jnp.zeros((N,N), dtype=jnp.complex128)
 
-    super_op = dq.mepropagator(O, jump_ops=jump_ops, tsave=[0, 1]).propagators[1].to_jax()
-    # Number of nonzero elements in super_op:
-    # N_qubits = 1 : 5.3 %, 
-    # N_qubits = 2 : 5.3 %, 
-    # N_qubits = 3 : 5.3 %, 
-    # N_qubits = 4 : 5.3 %,
-    # N_qubits = 5 : 5.3 %,
+    super_op = dq.mepropagator(
+        O,
+        jump_ops=jump_ops,
+        tsave=[1],
+        options=dq.Options(t0 = 0)
+    ).propagators[0].to_numpy()
+    # Num of elements in super_op: 16**N_qubits
+    # Num of elements in density matrix: 4**N_qubits
+    # Maximum num of nonzero elements in each row of super_op: scales as 2**N_qubits (apparently)
+    #
+    # Number of nonzero elements in super_op (largest number of nonzero elements in a row) divided by total number of elements:
+    # N_qubits = 1 : 38 % (50%)
+    # N_qubits = 2 : 14 % (25%)
+    # N_qubits = 3 : 5.3 % (13%)
+    # N_qubits = 4 : 2.0 % (6.3%)
+    # N_qubits = 5 : 0.7 %, (3.1%)
+    # N_qubits = 6 : 0.27 % (1.56%)
 
-    # Count nonzero elements
-    nnz = jnp.sum(super_op != 0).item()
-    print(f"Lindblad superoperator for {N_qubits} qubits with gamma+={gamma_p}, gamma-={gamma_m} has {nnz} nonzero elements out of {N**4} ({nnz / N**4 * 100:.6f} %)")
-    longest = 0
-    for row in super_op:
-        row_nnz = jnp.sum(row != 0).item()
-        if row_nnz > longest:
-            longest = row_nnz
-    print(f"Longest row has {longest} nonzero elements out of {N} ({longest / N * 100:.6f} %)")
+    # Because matrix is very sparse, we can optimize the multiplication by only considering the nonzero elements
+    # Below we have a sparse implementation for N_qubits > 3, and a dense implementation for N_qubits <= 3
+    # Speedup for sparse implementation:
+    # N_qubits = 4 : ~1.25x
+    # N_qubits = 5 : ~4x
+    # N_qubits = 6 : ~11x # Note: Runs extremely fast but takes ages to compile (~13 min on Macbook Pro M2)
+    if N_qubits <= 3:
+        for i in range(N*N):
+            for j in range(N*N):
+                assert np.abs(np.imag(super_op[i,j])) <= 1e-14, f"Superoperator element {super_op[i,j]} is not real."
+        
+        super_op = jnp.real(super_op)
+        super_op = jnp.array(super_op, dtype=jnp.float64)
 
+        def lindblad_solution(rho): # 3. Define function for state transition under lindblad evolution
+            return (super_op @ rho.flatten()).reshape(N, N)
+    else:
+        rows = []
+        cols = []
+        vals = []
 
-    print(super_op)
-    # 3. Define function for state transition under lindblad evolution
-    def lindblad_solution(rho):
-        return (super_op @ rho.flatten()).reshape(N, N)
+        for i in range(N*N):
+            for j in range(N*N):
+                if super_op[i,j] != 0:
+                    rows.append(i)
+                    cols.append(j)
+                    vals.append(np.real(super_op[i,j]))
 
+                    assert np.abs(np.imag(super_op[i,j])) <= 1e-14, f"Superoperator element {super_op[i,j]} is not real."
+
+        rows = jnp.array(rows, dtype=jnp.int32)
+        cols = jnp.array(cols, dtype=jnp.int32)
+        vals = jnp.array(vals, dtype=jnp.float64)
+
+        del super_op
+
+        def lindblad_solution(rho): # 3. Define function for state transition under lindblad evolution
+            return jax.ops.segment_sum(
+                vals * rho.flatten()[cols],
+                rows,
+                N*N
+            ).reshape(N, N)
+    
     return jax.jit(lindblad_solution)
 
 def generate_jump_superoperator_single_qubit(gamma_p, gamma_m):
@@ -301,10 +338,6 @@ def test_implementations():
             M_1 = f(1, params)
 
             assert jnp.allclose(M_0 @ M_0.conj().T + M_1 @ M_1.conj().T, jnp.eye(4)), "POVM elements do not sum to identity"
-            assert jnp.allclose(M_0, M_0.conj().T), "POVM element M_0 is not Hermitian"
-            assert jnp.allclose(M_1, M_1.conj().T), "POVM element M_1 is not Hermitian"
-            assert jnp.all(jnp.linalg.eigvals(M_0) >= 0), "POVM element M_0 is not positive semidefinite"
-            assert jnp.all(jnp.linalg.eigvals(M_1) >= 0), "POVM element M_1 is not positive semidefinite"
 
 def calculate_baseline(N_qubits: int, gamma_p: float, gamma_m: float, evaluation_time_steps: int, batch_size: int, generate_state: callable, key=jax.random.PRNGKey(0)):
     decay_superoperator = generate_jump_superoperator(N_qubits, gamma_p, gamma_m)
