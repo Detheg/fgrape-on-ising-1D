@@ -1,0 +1,1 @@
+{"N_samples": 4, "samples_offset": 0, "N_training_iterations": 10000, "learning_rate": 0.01, "convergence_threshold": 1e-06, "batch_size": 16, "eval_batch_size": 128, "evaluation_time_steps": 200}

@@ -432,8 +432,9 @@ def open_from_dir(dir_, exclude="", sort_by=[]):
 
             # Extract experiment parameters from filename
             params = {}
-            for param, p_type in experiment_param_formats + [("s", int)]:
-                match = re.search(rf"{param}=((?:[A-Za-z]+|-?\d+(?:\.\d+)?)(?:,(?:[A-Za-z]+|-?\d+(?:\.\d+)?))*)", file) # Regex which selects numbers + letters or floating point numbers
+            for i, (param, p_type) in enumerate(experiment_param_formats + [("s", int)]):
+                tmp = "_"*(not file.startswith(param)) + param
+                match = re.search(rf"{tmp}=((?:[A-Za-z]+|-?\d+(?:\.\d+)?)(?:,(?:[A-Za-z]+|-?\d+(?:\.\d+)?))*)", file) # Regex which selects numbers + letters or floating point numbers
                 if match:
                     value_str = match.group(1)
                     if p_type == list:

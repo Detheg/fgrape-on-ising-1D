@@ -5,7 +5,7 @@ sys.path.append(os.path.abspath("./../feedback-grape"))
 sys.path.append(os.path.abspath("./../"))
 
 # ruff: noqa
-from feedback_grape.fgrape import Gate # type: ignore
+from feedback_grape.fgrape import Gate, Decay # type: ignore
 from feedback_grape.utils.states import basis # type: ignore
 from feedback_grape.utils.fidelity import ket2dm, fidelity # type: ignore
 from feedback_grape.utils.operators import sigmaz, sigmam # type: ignore
@@ -79,15 +79,18 @@ def generate_povm(measurement_outcome, params, dim):
     )
 generate_povm = jax.jit(generate_povm, static_argnames=['dim'])
 
-def generate_jump_superoperator(N_qubits, gamma_z, gamma_m):
-    # 1. Define jump operators for each qubit
-    jump_ops = [
+def __jump_ops(N_qubits, gamma_z, gamma_m):
+    return [
         gamma_z**0.5 * embed(sigmaz(), 1, (2**j, 2, 2**(N_qubits - j - 1)))
         for j in range(N_qubits)
     ] + [
         gamma_m**0.5 * embed(sigmam(), 1, (2**j, 2, 2**(N_qubits - j - 1)))
         for j in range(N_qubits)
     ]
+
+def generate_jump_superoperator(N_qubits, gamma_z, gamma_m):
+    # 1. Define jump operators for each qubit
+    jump_ops = __jump_ops(N_qubits, gamma_z, gamma_m)
 
     # 2. Define superoperator for lindblad evolution
     N = 2**N_qubits
@@ -125,6 +128,15 @@ def init_decay_gate(N_qubits, gamma_z, gamma_m):
 
     return decay_gate
 
+def init_numeric_decay_gate(N_qubits, gamma_z, gamma_m):
+    jump_ops = __jump_ops(N_qubits, gamma_z, gamma_m)
+
+    decay_gate = Decay(
+        c_ops=jump_ops,
+    )
+
+    return decay_gate
+
 def init_povm_gate(key, N_qubits):
     base_dim = 2**N_qubits
     N_povm_params = base_dim*(base_dim+1)
@@ -158,10 +170,14 @@ def init_identity_gate():
     return U_gate
 
 # Functions which initialize gate combinations for the protocols
-def init_fgrape_protocol(key, N_qubits, N_meas, gamma_z, gamma_m):
+def init_fgrape_protocol(key, N_qubits, N_meas, gamma_z, gamma_m, use_numeric_decay=False):
     subkey1, subkey2 = jax.random.split(key, 2)
 
-    decay_gate = init_decay_gate(N_qubits, gamma_z, gamma_m)
+    decay_gate = (
+        init_numeric_decay_gate(N_qubits, gamma_z, gamma_m)
+        if use_numeric_decay else
+        init_decay_gate(N_qubits, gamma_z, gamma_m)
+    )
     povm_gate = init_povm_gate(subkey1, N_qubits)
     U_gate = init_unitary_gate(subkey2, N_qubits)
 
