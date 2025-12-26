@@ -270,5 +270,7 @@ experiment_param_formats = [
     ("Nqubits", int),
     ("Nmeas", int),
     ("gammaz", float),
-    ("gammam", float)
+    ("gammam", float),
+    ("Ntrainiter", int),
+    ("rnnhsize", int),
 ]
