@@ -1,5 +1,7 @@
 # ruff: noqa
 import sys, os
+from types import NoneType
+import numpy as np
 
 sys.path.append(os.path.abspath("./../feedback-grape"))
 sys.path.append(os.path.abspath("./../"))
@@ -17,30 +19,6 @@ import numpy as np
 jax.config.update("jax_enable_x64", True)
 
 # All the operators we need
-def generate_hermitian_old(params, dim):
-    assert len(params) == dim**2, "Number of real parameters must be dim^2 for an NxN Hermitian matrix."
-    
-    # Read the first (dim**2 - dim) / 2 as the real parts of the upper triangle
-    real_parts = jnp.array(params[: (dim**2 - dim) // 2])
-
-    # Read the next (dim**2 - dim) / 2 as the imaginary parts of the upper triangle
-    imag_parts = jnp.array(params[(dim**2 - dim) // 2 : - dim])
-
-    # Read the last dim as the diagonal elements
-    diag_parts = jnp.array(params[- dim:])
-
-    # Construct the Hermitian matrix
-    triag_parts = real_parts + 1j * imag_parts
-
-    return jnp.array([
-        [
-            diag_parts[i] if i == j else
-            triag_parts[(i * (i - 1)) // 2 + j - i - 1] if i < j else
-            jnp.conj(triag_parts[(j * (j - 1)) // 2 + i - j - 1])
-            for j in range(dim)
-        ] for i in range(dim)
-    ])
-
 def generate_hermitian(params, dim):
     assert len(params) == dim**2, "Number of real parameters must be dim^2 for an NxN Hermitian matrix."
     
@@ -280,6 +258,31 @@ def calculate_baseline(N_qubits: int, gamma_z: float, gamma_m: float, evaluation
         states_each.append(state.copy())
 
     return fidelities_each, states_each
+
+# Convert JAX/NumPy arrays to lists for JSON serialization
+def __to_serializable(obj):
+    if hasattr(obj, "tolist"):
+        return obj.tolist()
+    if isinstance(obj, dict):
+        return {k: __to_serializable(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [__to_serializable(x) for x in obj]
+    return obj
+
+# Convert FgResult to dictionary for JSON serialization
+def FgResult_to_dict(result):
+    data = {
+        "iterations": result.iterations,
+        #"returned_params": __to_serializable(result.returned_params), # Removed because it takes too much space
+        "final_fidelity": __to_serializable(result.final_fidelity) if type(result.final_fidelity) != NoneType else -1,
+        "final_purity":  __to_serializable(result.final_purity) if type(result.final_purity) != NoneType else -1,
+        "optimized_trainable_parameters": __to_serializable(result.optimized_trainable_parameters),
+        "fidelity_each_timestep": __to_serializable(np.array(result.fidelity_each_timestep)),
+        #"state_each_timestep_real": __to_serializable(np.real(np.array(result.state_each_timestep))), # Removed because it takes too much space
+        #"state_each_timestep_imag": __to_serializable(np.imag(np.array(result.state_each_timestep))),
+    }
+
+    return data
 
 experiment_param_formats = [
     ("t", int),
