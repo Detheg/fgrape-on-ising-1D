@@ -17,7 +17,7 @@ import numpy as np
 jax.config.update("jax_enable_x64", True)
 
 # All the operators we need
-def generate_hermitian(params, dim):
+def generate_hermitian_old(params, dim):
     assert len(params) == dim**2, "Number of real parameters must be dim^2 for an NxN Hermitian matrix."
     
     # Read the first (dim**2 - dim) / 2 as the real parts of the upper triangle
@@ -40,6 +40,23 @@ def generate_hermitian(params, dim):
             for j in range(dim)
         ] for i in range(dim)
     ])
+
+def generate_hermitian(params, dim):
+    assert len(params) == dim**2, "Number of real parameters must be dim^2 for an NxN Hermitian matrix."
+    
+    X = params.reshape(dim, dim)
+
+    # Real part: take the symmetric part of X
+    Re = 0.5 * (X + X.T)
+
+    # Imag part: take the antisymmetric part of X
+    Im = 0.5 * (X - X.T)
+
+    # Build Hermitian matrix: Herm = Re + 1j * Im
+    H = Re + 1j * Im
+
+    return H
+
 generate_hermitian = jax.jit(generate_hermitian, static_argnames=['dim'])
 
 def generate_unitary(params, dim):
