@@ -426,7 +426,7 @@ def open_from_dir(dir_, exclude="", sort_by=[]):
         with open(os.path.join(dir_, file), 'r') as f:
             # Extract fidelities
             if file.endswith(".json"):
-                fidelities = json.load(f)["fidelity_each_timestep"]
+                fidelities = np.array(json.load(f)["fidelity_each_timestep"]).mean(axis=1)
             else:
                 fidelities = np.load(os.path.join(dir_, file))["fidelities"]
 

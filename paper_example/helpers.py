@@ -293,5 +293,5 @@ experiment_param_formats = [
     ("gammam", float),
     ("Ntrainiter", int),
     ("rnnhsize", int),
-    ("learning_rate", float),
+    ("l", float),
 ]
